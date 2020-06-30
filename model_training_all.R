@@ -1,500 +1,1189 @@
 setwd(getwd()) 
 
 
-library(devtools)  
-library(randomForest)
-library(hydroGOF)
+library(plyr)
 library(chillR)
 library(caret)
 library(quantregForest)
+library(dynatopmodel)
+library(mlbench)
 library(imputeTS)
 library(raster)
+library(viridis)
+library(dplyr)
+library(magrittr)
+library(randomForest)
+library(earth)
+library(quantregForest)
+
 
 ######################################
-#### Input data
+#### validation by LC
 
-all<-read.csv("all_new.csv", header = T)
+all<-read.csv("data.csv", header = T)
+
+unique(all$name)
+
+names(all)
+
+all$landcover<-as.factor(all$landcover)
+
 summary(all)
 
+all2<-all[(!is.na(all$VWC))&(!is.na(all$elevation))&(!is.na(all$clay))&(!is.na(all$SMAP))&(!is.na(all$vv_10))&(!is.na(all$vv_30))&(!is.na(all$vv_100))&(!is.na(all$vv_500))&(!is.na(all$vv_1000))&(!is.na(all$vv_5000))&(!is.na(all$vv_10000))&(!is.na(all$vv_36000)),]
 
-cali<-all[all$Validation=="Training",]
-vali<-all[all$Validation=="Validation",]
+summary(all2)
+
+names(all2[,17:126])
+
+# preproc1 <-preProcess(all2[,17:71], method=c("range"))
+# all2[,17:71] <- predict(preproc1, all2[,17:71])
+#summary(all2)
+
+
+############ Global model
+
+
+cali<-all2[all2$Validation==0,]
+vali<-all2[all2$Validation==1,]
 
 summary(cali)
 summary(vali)
 
-
-################ Fit QRF
 
 fitControl = trainControl(## 5-fold CV
   method = "cv", 
   number = 5)
 
 
+
+############# 100 m
+
+
 names(cali)
 
 
-qrf = caret::train(x = cali[, c(9:31)],
-                   y = cali[,32],
-                   na.action = na.omit,
-                   trControl = fitControl, 
-                   method="qrf")
+index_100<-names(cali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                              "clay","sand","SOC","BD", "SMAP", 
+                              "vv_100", "vh_100", "angle_100", 
+                              "Min.vv_100.", "Min.vh_100." ,"Mean.vv_100." , "Mean.vh_100.", "Max.vv_100.", "Max.vh_100.", "StdDev.vv_100.", "StdDev.vh_100.")
 
-summary(qrf$finalModel)
 
-model<-qrf$finalModel
+qrf_100 = caret::train(x = cali[,index_100],
+                         y = cali$VWC,
+                         na.action = na.omit,
+                         trControl = fitControl, 
+                         metric = "RMSE",
+                         ntree = 50,
+                         nodesize = 10,
+                         method="qrf")
+
+qrf_100
+
+summary(qrf_100$finalModel)
+
+model_100<-qrf_100$finalModel
+
+
+
+model <- model_100
+
+
 
 varImpPlot(model)
+importance(model)
 
-varImpPlot.qrf(model)
-
-qrf_importance<-qrf$finalMode$importance
-write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
-
+# qrf_importance<-qrf$finalMode$importance
+# write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
 
 
-################# Model statistics
-
-soil_cali_mean  = predict(qrf$finalModel, newdata = cali[, c(9:31)], what = mean)
-soil_vali_mean  = predict(qrf$finalModel, newdata = vali[, c(9:31)], what = mean)
+soil_cali_mean  = predict(model, newdata = cali[, index_100], what = mean)
+soil_vali_mean  = predict(model, newdata = vali[, index_100], what = mean)
 
 
 
 
-sqrt(mean((soil_cali_mean - cali$SSM)^2))  # RMSE.c 
-mean(soil_cali_mean - cali$SSM)   # ME.c
-cor(soil_cali_mean, cali$SSM)^2   # R2.c
-
-
-sqrt(mean((vali[!is.na(soil_vali_mean),]$SSM - soil_vali_mean[!is.na(soil_vali_mean)])^2, na.rm = T))   # RMSE.v 
-mean(vali$SSM - soil_vali_mean, na.rm = T)    # ME.v
-cor(vali[!is.na(soil_vali_mean),]$SSM , soil_vali_mean[!is.na(soil_vali_mean)])^2   # R2.v
+sqrt(mean((soil_cali_mean - cali$VWC)^2))  # RMSE.c 
+mean(soil_cali_mean - cali$VWC)   # ME.c
+cor(soil_cali_mean, cali$VWC)^2   # R2.c
 
 
 
-sqrt(mean((cali$SMAP - cali$SSM)^2))  # RMSE.c 
-mean(cali$SMAP - cali$SSM)   # ME.c
-cor(cali$SMAP, cali$SSM)^2   # R2.c
-RPD(cali$SMAP, cali$SSM)
-RPIQ(cali$SMAP, cali$SSM)
-NSE(cali$SMAP, cali$SSM)
+sqrt(mean((model$predicted - cali$VWC)^2))  # RMSE.c 
+mean(model$predicted - cali$VWC)   # ME.c
+cor(model$predicted, cali$VWC)^2   # R2.c
+
+
+sqrt(mean((vali[!is.na(soil_vali_mean),]$VWC - soil_vali_mean[!is.na(soil_vali_mean)])^2, na.rm = T))   # RMSE.v 
+mean(vali$VWC - soil_vali_mean, na.rm = T)    # ME.v
+cor(vali[!is.na(soil_vali_mean),]$VWC , soil_vali_mean[!is.na(soil_vali_mean)])^2   # R2.v
 
 
 
-
-
-sqrt(mean((vali$SMAP - vali$SSM)^2))  # RMSE.v 
-mean(vali$SSM - vali$SMAP)    # ME.v
-cor(vali$SSM , vali$SMAP)^2   # R2.v
-RPD(vali$SMAP, vali$SSM)
-RPIQ(vali$SMAP, vali$SSM)
-NSE(vali$SMAP, vali$SSM)
-
-
-plot( cali$SSM,  soil_cali_mean, xlim = c(0, 0.7), ylim = c(0, 0.7))
+plot( cali$VWC,  soil_cali_mean, xlim = c(0, 0.7), ylim = c(0, 0.7))
 abline(0,1)
 
-plot( vali$SSM,  soil_vali_mean, xlim = c(0, 0.7), ylim = c(0, 0.7))
+plot( cali$VWC,  model$predicted, xlim = c(0, 0.7), ylim = c(0, 0.7))
+abline(0,1)
+
+plot( vali$VWC,  soil_vali_mean, xlim = c(0, 0.7), ylim = c(0, 0.7))
 abline(0,1)
 
 
-#################  Output model predictions at the stations
 
-soil_cali_sd  = predict(qrf$finalModel, newdata = cali[, c(9:31)], what = sd)
-soil_vali_sd  = predict(qrf$finalModel, newdata = vali[, c(9:31)], what = sd)
-
-soil_cali_upper  = predict(qrf$finalModel, newdata = cali[, c(9:31)], what = c(0.95)) 
-soil_vali_upper  = predict(qrf$finalModel, newdata = vali[, c(9:31)], what = c(0.95)) 
-
-soil_cali_lower  = predict(qrf$finalModel, newdata = cali[, c(9:31)], what = c(0.05)) 
-soil_vali_lower  = predict(qrf$finalModel, newdata = vali[, c(9:31)], what = c(0.05)) 
-
-
-
-out_cali<-cbind(cali, soil_cali_mean, soil_cali_sd, soil_cali_upper, soil_cali_lower )
-out_vali<-cbind(vali, soil_vali_mean, soil_vali_sd, soil_vali_upper, soil_vali_lower )
-
-write.csv(out_cali, "out_cali.csv", row.names = F)
-
-write.csv(out_vali, "out_vali.csv", row.names = F)
+sqrt(mean((cali$SMAP - cali$VWC)^2))  # RMSE.c 
+mean(cali$SMAP - cali$VWC)   # ME.c
+cor(cali$SMAP, cali$VWC)^2   # R2.c
+RPD(cali$SMAP, cali$VWC)
+RPIQ(cali$SMAP, cali$VWC)
+#NSE(cali$SMAP, cali$VWC)
 
 
 
 
-################### Mapping onto a farm in Australia
+
+sqrt(mean((vali$SMAP - vali$VWC)^2))  # RMSE.v 
+mean(vali$VWC - vali$SMAP)    # ME.v
+cor(vali$VWC , vali$SMAP)^2   # R2.v
+RPD(vali$SMAP, vali$VWC)
+RPIQ(vali$SMAP, vali$VWC)
+#NSE(vali$SMAP, vali$VWC)
 
 
-library(raster)
-require(rgdal)
-library(sf)
-library(ggplot2)
-library(plyr)
-library(stringr)
-library(reshape)
-library(matrixStats)
-library(smapr)
-library(sp)
-library(raster)
-require(rgdal)
-library(FedData)
+out_cali<-cali
+out_vali<-vali
+out_cali$VWC_mean<-soil_cali_mean
+out_vali$VWC_mean<-soil_vali_mean
+out_cali$VWC_cv<-model$predicted
+out_vali$VWC_cv<-soil_vali_mean
 
+out<-rbind(out_cali, out_vali)
 
-############### SMAP
-
-
-WD_poly<-c("../Validation/All_stations/")
+write.csv(out, "out_100m_full.csv", row.names = F)
 
 
 
-library(stringr)
-require(raster)
-require(rgdal)
-library(plyr)
-library(stringr)
-library(reshape)
-library(matrixStats)
-library(imputeTS)
+#### Drop covariates
+{
+  
+  ############# Drop SMAP
+  
+  
+  
+  index_SMAP<-names(cali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                                 "clay","sand","SOC","BD",
+                                 "vv_100", "vh_100", "angle_100", 
+                                 "Min.vv_100.", "Min.vh_100." ,"Mean.vv_100." , "Mean.vh_100.", "Max.vv_100.", "Max.vh_100.", "StdDev.vv_100.", "StdDev.vh_100.")
+  
+  qrf_100_SMAP = caret::train(x = cali[,index_SMAP],
+                                y = cali$VWC,
+                                na.action = na.omit,
+                                trControl = fitControl, 
+                                metric = "RMSE",
+                                ntree = 50,
+                                nodesize = 10,
+                                method="qrf")
+  
+  qrf_100_SMAP
+  
+  summary(qrf_100_SMAP$finalModel)
+  
+  model_100_SMAP<-qrf_100_SMAP$finalModel
+  
+  model_SMAP<-model_100_SMAP
+  
+  
+  
+  varImpPlot(model_SMAP)
+  importance(model_SMAP)
+  
+  # qrf_importance<-qrf$finalMode$importance
+  # write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
+  
+  
+  soil_cali_mean_SMAP  = predict(model_SMAP, newdata = cali[, index_SMAP], what = mean)
+  soil_vali_mean_SMAP  = predict(model_SMAP, newdata = vali[, index_SMAP], what = mean)
+  
+  
+  
+  
+  sqrt(mean((soil_cali_mean_SMAP - cali$VWC)^2))  # RMSE.c 
+  mean(soil_cali_mean_SMAP - cali$VWC)   # ME.c
+  cor(soil_cali_mean_SMAP, cali$VWC)^2   # R2.c
+  
+  
+  
+  sqrt(mean((model_SMAP$predicted - cali$VWC)^2))  # RMSE.c 
+  mean(model_SMAP$predicted - cali$VWC)   # ME.c
+  cor(model_SMAP$predicted, cali$VWC)^2   # R2.c
+  
+  
+  sqrt(mean((vali[!is.na(soil_vali_mean_SMAP),]$VWC - soil_vali_mean_SMAP[!is.na(soil_vali_mean_SMAP)])^2, na.rm = T))   # RMSE.v 
+  mean(vali$VWC - soil_vali_mean_SMAP, na.rm = T)    # ME.v
+  cor(vali[!is.na(soil_vali_mean_SMAP),]$VWC , soil_vali_mean_SMAP[!is.na(soil_vali_mean_SMAP)])^2   # R2.v
+  
+  
+  
+  plot( cali$VWC,  soil_cali_mean_SMAP, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( cali$VWC,  model_SMAP$predicted, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( vali$VWC,  soil_vali_mean_SMAP, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  
+  
+  out_cali_SMAP<-cali
+  out_vali_SMAP<-vali
+  out_cali_SMAP$VWC_mean<-soil_cali_mean_SMAP
+  out_vali_SMAP$VWC_mean<-soil_vali_mean_SMAP
+  out_cali_SMAP$VWC_cv<-model_SMAP$predicted
+  out_vali_SMAP$VWC_cv<-soil_vali_mean_SMAP
+  
+  out_SMAP<-rbind(out_cali_SMAP, out_vali_SMAP)
+  
+  write.csv(out_SMAP, "out_LC_full_Drop_SMAP.csv", row.names = F)
    
-   
-   WD_ancillary <- "../Validation/ancillary_validation/"
-   WD_LC <- "../Validation/LC_validation/"
-   WD_Sentinel_angle <-"../Validation/Sentinel/angle_validation/"
-   WD_Sentinel_vv <-"../Validation/Sentinel/vv_validation/"
-   WD_Sentinel_vh <-"../Validation/Sentinel/vh_validation/"
-   WD_Sentinel_dates <-"../Validation/Sentinel/dates_validation/"
-   WD_SMAP <- "../Validation/SMAP_validation/"
-   
-   out_all_vv<-NULL
-   out_all_vh<-NULL
-   out_all_angle<-NULL
-   out_all_ancillary<-NULL
-   out_all_LAI<-NULL
-   out_all_SMAP<-NULL
-   
-   
-   
-   
-   ROI_names<-list.files(WD_poly, pattern = ".shp", full.names = T) 
-   sites_subset<- shapefile(ROI_names[1])
-   
-   
-   
-   # Make a grid
-   # Lambert Conformal Conic
-   sites_proj <- spTransform(sites_subset, CRS("+proj=utm +zone=55+datum=WGS84"))
-   crs(sites_proj) 
-   
-   grid <- makegrid(sites_proj, cellsize = 100)
-   grid.sp <- SpatialPoints(grid, proj4string = CRS(proj4string(sites_proj)))
-   
-   grid.sp <- grid.sp[!is.na(over(grid.sp,sites_proj)),]
-   
-   coordinates<-as.data.frame(grid.sp)
-   
-   grid.sp <- spTransform(grid.sp, proj4string(sites_subset))
+  
+  
+  ############# Drop Sentinel
+  
+  
+  
+  index_S1<-names(cali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                               "clay","sand","SOC","BD",
+                               "SMAP" )
+  
+  qrf_100_S1 = caret::train(x = cali[,index_S1],
+                              y = cali$VWC,
+                              na.action = na.omit,
+                              trControl = fitControl, 
+                              metric = "RMSE",
+                              ntree = 50,
+                              nodesize = 10,
+                              method="qrf")
+  
+  qrf_100_S1
+  
+  summary(qrf_100_S1$finalModel)
+  
+  model_100_S1<-qrf_100_S1$finalModel
+  
+  model_S1<-model_100_S1
+  
+  
+  
+  varImpPlot(model_S1)
+  importance(model_S1)
+  
+  # qrf_importance<-qrf$finalMode$importance
+  # write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
+  
+  
+  soil_cali_mean_S1  = predict(model_S1, newdata = cali[, index_S1], what = mean)
+  soil_vali_mean_S1  = predict(model_S1, newdata = vali[, index_S1], what = mean)
+  
+  
+  
+  
+  sqrt(mean((soil_cali_mean_S1 - cali$VWC)^2))  # RMSE.c 
+  mean(soil_cali_mean_S1 - cali$VWC)   # ME.c
+  cor(soil_cali_mean_S1, cali$VWC)^2   # R2.c
+  
+  
+  
+  sqrt(mean((model_S1$predicted - cali$VWC)^2))  # RMSE.c 
+  mean(model_S1$predicted - cali$VWC)   # ME.c
+  cor(model_S1$predicted, cali$VWC)^2   # R2.c
+  
+  
+  sqrt(mean((vali[!is.na(soil_vali_mean_S1),]$VWC - soil_vali_mean_S1[!is.na(soil_vali_mean_S1)])^2, na.rm = T))   # RMSE.v 
+  mean(vali$VWC - soil_vali_mean_S1, na.rm = T)    # ME.v
+  cor(vali[!is.na(soil_vali_mean_S1),]$VWC , soil_vali_mean_S1[!is.na(soil_vali_mean_S1)])^2   # R2.v
+  
+  
+  
+  plot( cali$VWC,  soil_cali_mean_S1, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( cali$VWC,  model_S1$predicted, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( vali$VWC,  soil_vali_mean_S1, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  
+  
+  out_cali_S1<-cali
+  out_vali_S1<-vali
+  out_cali_S1$VWC_mean<-soil_cali_mean_S1
+  out_vali_S1$VWC_mean<-soil_vali_mean_S1
+  out_cali_S1$VWC_cv<-model_S1$predicted
+  out_vali_S1$VWC_cv<-soil_vali_mean_S1
+  
+  out_S1<-rbind(out_cali_S1, out_vali_S1)
+  
+  write.csv(out_S1, "out_LC_full_Drop_S1.csv", row.names = F)
+  
+  
+  
+  
+  
+  
+  
+  
+  ############# Drop terrain
+  
+  
+  
+  index_terrain<-names(cali) %in% c("clay","sand","SOC","BD",
+                                    "SMAP", "vv_100", "vh_100", "angle_100", 
+                                    "Min.vv_100.", "Min.vh_100." ,"Mean.vv_100." , "Mean.vh_100.", "Max.vv_100.", "Max.vh_100.", "StdDev.vv_100.", "StdDev.vh_100.")
+  
+  qrf_100_terrain = caret::train(x = cali[,index_terrain],
+                                   y = cali$VWC,
+                                   na.action = na.omit,
+                                   trControl = fitControl, 
+                                   metric = "RMSE",
+                                   ntree = 50,
+                                   nodesize = 10,
+                                   method="qrf")
+  
+  qrf_100_terrain
+  
+  summary(qrf_100_terrain$finalModel)
+  
+  model_100_terrain<-qrf_100_terrain$finalModel
+  
+  model_terrain<-model_100_terrain
+  
+  
+  
+  varImpPlot(model_terrain)
+  importance(model_terrain)
+  
+  # qrf_importance<-qrf$finalMode$importance
+  # write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
+  
+  
+  soil_cali_mean_terrain  = predict(model_terrain, newdata = cali[, index_terrain], what = mean)
+  soil_vali_mean_terrain  = predict(model_terrain, newdata = vali[, index_terrain], what = mean)
+  
+  
+  
+  
+  sqrt(mean((soil_cali_mean_terrain - cali$VWC)^2))  # RMSE.c 
+  mean(soil_cali_mean_terrain - cali$VWC)   # ME.c
+  cor(soil_cali_mean_terrain, cali$VWC)^2   # R2.c
+  
+  
+  
+  sqrt(mean((model_terrain$predicted - cali$VWC)^2))  # RMSE.c 
+  mean(model_terrain$predicted - cali$VWC)   # ME.c
+  cor(model_terrain$predicted, cali$VWC)^2   # R2.c
+  
+  
+  sqrt(mean((vali[!is.na(soil_vali_mean_terrain),]$VWC - soil_vali_mean_terrain[!is.na(soil_vali_mean_terrain)])^2, na.rm = T))   # RMSE.v 
+  mean(vali$VWC - soil_vali_mean_terrain, na.rm = T)    # ME.v
+  cor(vali[!is.na(soil_vali_mean_terrain),]$VWC , soil_vali_mean_terrain[!is.na(soil_vali_mean_terrain)])^2   # R2.v
+  
+  
+  
+  plot( cali$VWC,  soil_cali_mean_terrain, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( cali$VWC,  model_terrain$predicted, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( vali$VWC,  soil_vali_mean_terrain, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  
+  
+  out_cali_terrain<-cali
+  out_vali_terrain<-vali
+  out_cali_terrain$VWC_mean<-soil_cali_mean_terrain
+  out_vali_terrain$VWC_mean<-soil_vali_mean_terrain
+  out_cali_terrain$VWC_cv<-model_terrain$predicted
+  out_vali_terrain$VWC_cv<-soil_vali_mean_terrain
+  
+  out_terrain<-rbind(out_cali_terrain, out_vali_terrain)
+  
+  write.csv(out_terrain, "out_LC_full_Drop_terrain.csv", row.names = F)
+  
+  
+  
+  
+  
+  
+  
+  
+  ############# Drop soil
+  
+  
+  
+  index_soil<-names(cali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                                 "SMAP", "vv_100", "vh_100", "angle_100", 
+                                 "Min.vv_100.", "Min.vh_100." ,"Mean.vv_100." , "Mean.vh_100.", "Max.vv_100.", "Max.vh_100.", "StdDev.vv_100.", "StdDev.vh_100.")
+  
+  qrf_100_soil = caret::train(x = cali[,index_soil],
+                                y = cali$VWC,
+                                na.action = na.omit,
+                                trControl = fitControl, 
+                                metric = "RMSE",
+                                ntree = 50,
+                                nodesize = 10,
+                                method="qrf")
+  
+  qrf_100_soil
+  
+  summary(qrf_100_soil$finalModel)
+  
+  model_100_soil<-qrf_100_soil$finalModel
+  
+  model_soil<-model_100_soil
+  
+  
+  
+  varImpPlot(model_soil)
+  importance(model_soil)
+  
+  # qrf_importance<-qrf$finalMode$importance
+  # write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
+  
+  
+  soil_cali_mean_soil  = predict(model_soil, newdata = cali[, index_soil], what = mean)
+  soil_vali_mean_soil  = predict(model_soil, newdata = vali[, index_soil], what = mean)
+  
+  
+  
+  
+  sqrt(mean((soil_cali_mean_soil - cali$VWC)^2))  # RMSE.c 
+  mean(soil_cali_mean_soil - cali$VWC)   # ME.c
+  cor(soil_cali_mean_soil, cali$VWC)^2   # R2.c
+  
+  
+  
+  sqrt(mean((model_soil$predicted - cali$VWC)^2))  # RMSE.c 
+  mean(model_soil$predicted - cali$VWC)   # ME.c
+  cor(model_soil$predicted, cali$VWC)^2   # R2.c
+  
+  
+  sqrt(mean((vali[!is.na(soil_vali_mean_soil),]$VWC - soil_vali_mean_soil[!is.na(soil_vali_mean_soil)])^2, na.rm = T))   # RMSE.v 
+  mean(vali$VWC - soil_vali_mean_soil, na.rm = T)    # ME.v
+  cor(vali[!is.na(soil_vali_mean_soil),]$VWC , soil_vali_mean_soil[!is.na(soil_vali_mean_soil)])^2   # R2.v
+  
+  
+  
+  plot( cali$VWC,  soil_cali_mean_soil, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( cali$VWC,  model_soil$predicted, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( vali$VWC,  soil_vali_mean_soil, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  
+  
+  out_cali_soil<-cali
+  out_vali_soil<-vali
+  out_cali_soil$VWC_mean<-soil_cali_mean_soil
+  out_vali_soil$VWC_mean<-soil_vali_mean_soil
+  out_cali_soil$VWC_cv<-model_soil$predicted
+  out_vali_soil$VWC_cv<-soil_vali_mean_soil
+  
+  out_soil<-rbind(out_cali_soil, out_vali_soil)
+  
+  write.csv(out_soil, "out_LC_full_Drop_soil.csv", row.names = F)
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  ############# Drop SMAP + S1
+  
+  
+  
+  index_SMAP_S1<-names(cali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                                 "clay","sand","SOC","BD")
+  
+  qrf_100_SMAP_S1 = caret::train(x = cali[,index_SMAP_S1],
+                              y = cali$VWC,
+                              na.action = na.omit,
+                              trControl = fitControl, 
+                              metric = "RMSE",
+                              ntree = 50,
+                              nodesize = 10,
+                              method="qrf")
+  
+  qrf_100_SMAP_S1
+  
+  summary(qrf_100_SMAP_S1$finalModel)
+  
+  model_100_SMAP_S1<-qrf_100_SMAP_S1$finalModel
+  
+  model_SMAP_S1<-model_100_SMAP_S1
+  
+  
+  
+  varImpPlot(model_SMAP_S1)
+  importance(model_SMAP_S1)
+  
+  # qrf_importance<-qrf$finalMode$importance
+  # write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
+  
+  
+  soil_cali_mean_SMAP_S1  = predict(model_SMAP_S1, newdata = cali[, index_SMAP_S1], what = mean)
+  soil_vali_mean_SMAP_S1  = predict(model_SMAP_S1, newdata = vali[, index_SMAP_S1], what = mean)
+  
+  
+  
+  
+  sqrt(mean((soil_cali_mean_SMAP_S1 - cali$VWC)^2))  # RMSE.c 
+  mean(soil_cali_mean_SMAP_S1 - cali$VWC)   # ME.c
+  cor(soil_cali_mean_SMAP_S1, cali$VWC)^2   # R2.c
+  
+  
+  
+  sqrt(mean((model_SMAP_S1$predicted - cali$VWC)^2))  # RMSE.c 
+  mean(model_SMAP_S1$predicted - cali$VWC)   # ME.c
+  cor(model_SMAP_S1$predicted, cali$VWC)^2   # R2.c
+  
+  
+  sqrt(mean((vali[!is.na(soil_vali_mean_SMAP_S1),]$VWC - soil_vali_mean_SMAP_S1[!is.na(soil_vali_mean_SMAP_S1)])^2, na.rm = T))   # RMSE.v 
+  mean(vali$VWC - soil_vali_mean_SMAP_S1, na.rm = T)    # ME.v
+  cor(vali[!is.na(soil_vali_mean_SMAP_S1),]$VWC , soil_vali_mean_SMAP_S1[!is.na(soil_vali_mean_SMAP_S1)])^2   # R2.v
+  
+  
+  
+  plot( cali$VWC,  soil_cali_mean_SMAP_S1, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( cali$VWC,  model_SMAP_S1$predicted, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  plot( vali$VWC,  soil_vali_mean_SMAP_S1, xlim = c(0, 0.7), ylim = c(0, 0.7))
+  abline(0,1)
+  
+  
+  
+  out_cali_SMAP_S1<-cali
+  out_vali_SMAP_S1<-vali
+  out_cali_SMAP_S1$VWC_mean<-soil_cali_mean_SMAP_S1
+  out_vali_SMAP_S1$VWC_mean<-soil_vali_mean_SMAP_S1
+  out_cali_SMAP_S1$VWC_cv<-model_SMAP_S1$predicted
+  out_vali_SMAP_S1$VWC_cv<-soil_vali_mean_SMAP_S1
+  
+  out_SMAP_S1<-rbind(out_cali_SMAP_S1, out_vali_SMAP_S1)
+  
+  write.csv(out_SMAP_S1, "out_LC_full_Drop_SMAP_S1.csv", row.names = F)
+  
+  
+  
+}
 
-   # SMAP
-   smap_names<-list.files(WD_SMAP, pattern = ".tif", full.names = T)
-   smap_names_2<-list.files(WD_SMAP, pattern = ".tif", full.names = F)
-   smap_raster<-lapply(smap_names, raster)
-   smap_dates<-substr(smap_names_2, 6, 13)
-   
 
-   
-   
-   
-   # plot(grid.sp) 
-   
-   
-   grid_smap.sp <- spTransform(grid.sp,   crs(smap_raster[[1]]))
-   extract.smap<-as.data.frame(do.call("cbind",  lapply( smap_raster, extract,  grid_smap.sp)))
-   colnames(extract.smap)<- smap_dates
-   
-   SMAP_SM_filled<-extract.smap
-   
-   
-   for (i in 1:nrow(extract.smap))
-     
-   {
-     if (sum(!is.na.data.frame(as.numeric(extract.smap[i,])))>2)
-     {
-       SMAP_SM_filled[i,] <- na_ma(as.numeric(extract.smap[i,]), k = 3, weighting = "simple")
-       
-     }
-     
-     else
-     {
-       SMAP_SM_filled[i,] <- NA
-       
-     }
-   }
-   
-   ROI_names<-"OZNET_1"
-   site_names<-ROI_names
-   
-   ### Sentinel  
-   names_Sentinel_vv<-list.files(WD_Sentinel_vv, pattern = site_names, full.names = T)
-   Sentinel_vv_raster <- stack(names_Sentinel_vv)
-   
-   names_dates_vv<-list.files(WD_Sentinel_dates, pattern = site_names, full.names = T)
-   dates_vv_raw<- as.character(read.csv(names_dates_vv, header = T)[,5])
-   dates_vv_new<-substr(dates_vv_raw, 2, str_length(dates_vv_raw)-1)
-   dates_vv_new_2<- strsplit(dates_vv_new, ", ")[[1]]
-   dates_vv_final<-substr(dates_vv_new_2, 1, 10)
-   dates_vv_final<-paste(substr(dates_vv_final, 1,4), substr(dates_vv_final, 6,7), substr(dates_vv_final, 9,10), sep = "")
-   
-   
-   extract.Sentinel_vv<-as.data.frame(do.call("cbind", lapply(as.list(Sentinel_vv_raster), extract, grid.sp)))
-   colnames(extract.Sentinel_vv)<- dates_vv_final
-   
-   extract.Sentinel_vv<-extract.Sentinel_vv[,colnames(extract.Sentinel_vv)%in%unique(dates_vv_final)]
-   extract.Sentinel_vv<-extract.Sentinel_vv[,colnames(extract.Sentinel_vv)%in%unique(dates_vv_final)]
-   
-   extract.Sentinel_vv$vv_mean<-rowMeans2(as.matrix(extract.Sentinel_vv), na.rm = T)
-   extract.Sentinel_vv$vv_sd<-rowSds(as.matrix(extract.Sentinel_vv), na.rm = T)
-   extract.Sentinel_vv$vv_min<-rowMins(as.matrix(extract.Sentinel_vv), na.rm = T)
-   extract.Sentinel_vv$vv_max<-rowMaxs(as.matrix(extract.Sentinel_vv), na.rm = T)
-   
-   names_Sentinel_vh<-list.files(WD_Sentinel_vh, pattern = site_names, full.names = T)
-   Sentinel_vh_raster <- stack(names_Sentinel_vh)
-   
-   names_dates_vh<-list.files(WD_Sentinel_dates, pattern = site_names, full.names = T)
-   dates_vh_raw<- as.character(read.csv(names_dates_vh, header = T)[,4])
-   dates_vh_new<-substr(dates_vh_raw, 2, str_length(dates_vh_raw)-1)
-   dates_vh_new_2<- strsplit(dates_vh_new, ", ")[[1]]
-   dates_vh_final<-substr(dates_vh_new_2, 1, 10)
-   dates_vh_final<-paste(substr(dates_vh_final, 1,4), substr(dates_vh_final, 6,7), substr(dates_vh_final, 9,10), sep = "")
-   
-   extract.Sentinel_vh<-as.data.frame(do.call("cbind", lapply(as.list(Sentinel_vh_raster), extract, grid.sp)))
-   colnames(extract.Sentinel_vh)<- dates_vh_final
-   
-   ####### Remove repeated dates
-   extract.Sentinel_vh<-extract.Sentinel_vh[,colnames(extract.Sentinel_vh)%in%unique(dates_vh_final)]
-   extract.Sentinel_vh<-extract.Sentinel_vh[,colnames(extract.Sentinel_vh)%in%unique(dates_vh_final)]
-   
-   extract.Sentinel_vh$vh_mean<-rowMeans2(as.matrix(extract.Sentinel_vh), na.rm = T)
-   extract.Sentinel_vh$vh_sd<-rowSds(as.matrix(extract.Sentinel_vh), na.rm = T)
-   extract.Sentinel_vh$vh_min<-rowMins(as.matrix(extract.Sentinel_vh), na.rm = T)
-   extract.Sentinel_vh$vh_max<-rowMaxs(as.matrix(extract.Sentinel_vh), na.rm = T)
-   
-   
-   names_Sentinel_angle<-list.files(WD_Sentinel_angle, pattern = site_names, full.names = T)
-   Sentinel_angle_raster <- stack(names_Sentinel_angle)
-   
-   
-   names_dates_angle<-list.files(WD_Sentinel_dates, pattern = site_names, full.names = T)
-   dates_angle_raw<- as.character(read.csv(names_dates_angle, header = T)[,3])
-   dates_angle_new<-substr(dates_angle_raw, 2, str_length(dates_angle_raw)-1)
-   dates_angle_new_2<- strsplit(dates_angle_new, ", ")[[1]]
-   dates_angle_final<-substr(dates_angle_new_2, 1, 10)
-   dates_angle_final<-paste(substr(dates_angle_final, 1,4), substr(dates_angle_final, 6,7), substr(dates_angle_final, 9,10), sep = "")
-   
-   
-   Sentinel_angle_raster_list<-as.list(Sentinel_angle_raster)
-   Sentinel_angle_raster_new<-list(NA)
-   for (k in 1:length(dates_angle_final))
-   {
-     Sentinel_angle_raster_new[[k]] <- Sentinel_angle_raster_list[[k+1]]
-     
-   }
-   
-   extract.Sentinel_angle<-as.data.frame(do.call("cbind", lapply(Sentinel_angle_raster_new, extract, grid.sp)))
-   colnames(extract.Sentinel_angle)<- dates_angle_final
-   
-   ####### Remove repeated dates
-   extract.Sentinel_angle<-extract.Sentinel_angle[,colnames(extract.Sentinel_angle)%in%unique(dates_angle_final)]
-   extract.Sentinel_angle<-extract.Sentinel_angle[,colnames(extract.Sentinel_angle)%in%unique(dates_angle_final)]
-   
-   
-   
-   
-   ############  extract ancillary
-   names_ancillary<-list.files(WD_ancillary, pattern = site_names, full.names = T)
-   ancillary_raster <- stack(names_ancillary)
-   extract.ancillary<-as.data.frame(do.call("cbind", lapply(as.list(ancillary_raster), extract, grid.sp)))
-   colnames(extract.ancillary)<- c("elevation", "slope_0", "aspect_0", "hillshade","slope", "aspect", "profc", "tangc", "planc", "meanc",  "roughness", "clay", "sand", "BD", "SOC", "FC", "PWP")
-   
-   
-   
-   ######## buffer zones for soil properties
-   if (sum(is.na(extract.ancillary$clay))>0)
-   {extract.ancillary_soil<-as.data.frame(do.call("cbind", lapply(as.list(ancillary_raster), extract, grid.sp, buffer = 300, fun = mean)))
-   colnames(extract.ancillary_soil)<- c("elevation", "slope_0", "aspect_0", "hillshade","slope", "aspect", "profc", "tangc", "planc", "meanc",  "roughness", "clay", "sand", "BD", "SOC", "FC", "PWP")
-   extract.ancillary[is.na(extract.ancillary$clay),c(12:17)]<-extract.ancillary_soil[is.na(extract.ancillary$clay),c(12:17)]
-   
-   
-   }
-   
-   
-   extract.ancillary$BD<-extract.ancillary$BD/100.0
-   extract.ancillary$SOC<-extract.ancillary$SOC/5.0  ######## 5 times g /kg #
-   extract.ancillary$FC<-extract.ancillary$FC/100.0
-   extract.ancillary$PWP<-extract.ancillary$PWP/100.0
-   
-   
-   
-   ########## LC
-   
-   names_LC<-list.files(WD_LC, pattern = site_names, full.names = T)
-   LC_raster <- raster(names_LC)
-   extract.LC<-as.data.frame(do.call("cbind", lapply(as.list(LC_raster), extract, grid.sp)))
-   colnames(extract.LC)<- c("LC")
-   
-   extract.LC$LC2<-extract.LC$LC
-   
-   if (sum(extract.LC$LC2== 1|extract.LC$LC2== 2|extract.LC$LC2== 3|extract.LC$LC2== 4|extract.LC$LC2== 5))
-   {
-     extract.LC[extract.LC$LC2== 1|extract.LC$LC2== 2|extract.LC$LC2== 3|extract.LC$LC2== 4|extract.LC$LC2== 5, ]$LC2 <- "Forest"
-   }
-   
-   if (sum(extract.LC$LC2== 6|extract.LC$LC2== 7))
-   {
-     extract.LC[extract.LC$LC2== 6|extract.LC$LC2== 7, ]$LC2 <- "Shrubland"
-   }
-   
-   if (sum(extract.LC$LC2== 8|extract.LC$LC2== 9))
-   {
-     extract.LC[extract.LC$LC2== 8|extract.LC$LC2== 9, ]$LC2 <- "Savanna"
-   }
-   
-   if (sum(extract.LC$LC2== 10))
-   {
-     extract.LC[extract.LC$LC2== 10, ]$LC2 <- "Grassland"
-   }
-   
-   if (sum(extract.LC$LC2== 12|extract.LC$LC2== 14))
-   {
-     
-     extract.LC[extract.LC$LC2== 12|extract.LC$LC2== 14, ]$LC2 <- "Cropland"
-   }
-   
-   if (sum(extract.LC$LC2== 16))
-   {
-     extract.LC[extract.LC$LC2== 16, ]$LC2 <- "Barren"
-   }
-   
-   
-   
-   extract.LC<-as.data.frame(extract.LC$LC2)
-   colnames(extract.LC)<-"LC"
-   
-   
-   
-   
-   ############### DEM
-   
-   WD_DEM <- "../dem/"
-   
-   names_DEM<- list.files(WD_DEM, pattern = "tif", full.names = T)
-   DEM_raster <- stack(names_DEM)
-   
-   DEM_raster_list<-as.list(DEM_raster)
-   
-   extract.DEM<-as.data.frame(do.call("cbind", lapply(DEM_raster_list, extract, grid.sp)))
-   colnames(extract.DEM)<- c("aspect","elevation","flowdir","slope","tpi","tri")
-   
-   
-   
-   ############## Combine
-   
-   
-   
-   
-   out_static<-cbind(as.data.frame(grid.sp),extract.LC, extract.DEM, extract.ancillary[,12:17], extract.Sentinel_vv[,(ncol(extract.Sentinel_vv)-3):ncol(extract.Sentinel_vv)], extract.Sentinel_vh[,(ncol(extract.Sentinel_vh)-3):ncol(extract.Sentinel_vh)])
-   
-   dates_Sentinel<-colnames(extract.Sentinel_vh)[1:(ncol(extract.Sentinel_vh)-4)]
-   dates_SMAP <-colnames(SMAP_SM_filled)
-   dates_map <- intersect(dates_Sentinel, dates_SMAP )
-   
-   VWC_mean <- matrix(NA, nrow = nrow(SMAP_SM_filled), ncol = length(dates_map))
-   colnames(VWC_mean)<-paste("VWC", dates_map, sep = "_")
-   VWC_SD <- matrix(NA, nrow = nrow(SMAP_SM_filled), ncol = length(dates_map))
-   colnames(VWC_SD)<-paste("VWC", dates_map, sep = "_")
-   VWC_CI_lower <- matrix(NA, nrow = nrow(SMAP_SM_filled), ncol = length(dates_map))
-   colnames(VWC_CI_lower)<-paste("VWC", dates_map, sep = "_")
-   VWC_CI_upper <- matrix(NA, nrow = nrow(SMAP_SM_filled), ncol = length(dates_map))
-   colnames(VWC_CI_upper)<-paste("VWC", dates_map, sep = "_")
-   
-   
-   for ( j in 1:length(dates_map))
-     
-   {
-     
-     out_dynamic<-cbind(extract.Sentinel_vv[,colnames(extract.Sentinel_vv)==dates_map[j]], extract.Sentinel_vh[,colnames(extract.Sentinel_vh)==dates_map[j]], extract.Sentinel_angle[,colnames(extract.Sentinel_angle)==dates_map[j]], SMAP_SM_filled[,colnames(SMAP_SM_filled)==dates_map[j]])
-     
-     colnames(out_dynamic) <- c("vv","vh","angle","SMAP")
-     
-     out_covariate <- cbind( out_static, out_dynamic)
-     
-     na_index<- !is.na(out_covariate$aspect)&!is.na(out_covariate$clay)&!is.na(out_covariate$vv)&!is.na(out_covariate$vh)&!is.na(out_covariate$SMAP)
-     
-     VWC_mean[na_index,j] <- predict(qrf$finalModel, newdata = out_covariate[na_index, c(4, 6:27)], what = mean)
-     VWC_SD[na_index,j] <- predict(qrf$finalModel, newdata = out_covariate[na_index, c(4, 6:27)], what = sd)
-     VWC_CI_lower[na_index,j] <- predict(qrf$finalModel, newdata = out_covariate[na_index, c(4, 6:27)], what = c(0.05))
-     VWC_CI_upper[na_index,j] <- predict(qrf$finalModel, newdata = out_covariate[na_index, c(4, 6:27)], what = c(0.95))
-     
-     
-     VWC_raster <- rasterFromXYZ(cbind(coordinates, VWC_mean[,j]), res=c(100,100), crs =   crs(sites_proj))
-     writeRaster(VWC_raster, paste("VWC_Oz_", dates_map[j], ".tif", sep = ""))
-     
-     
-   }
-   
-   
-   
-   ##################### Output SSM maps in Australia
-   
-   out_mean <- cbind(coordinates, out_static,  VWC_mean)
-   out_SD <- cbind(coordinates, out_static,  VWC_SD)
-   out_CI_lower <- cbind(coordinates, out_static,  VWC_CI_lower)
-   out_CI_upper <- cbind(coordinates, out_static,  VWC_CI_upper)
-   
-   
-   
-   
-   write.table(out_mean, "out_Oz_mean.txt", row.names = F, sep = ",")
-   write.table(out_SD, "out_Oz_SD.txt", row.names = F, sep = ",")
-   write.table(out_CI_lower, "out_Oz_CI_lower.txt", row.names = F, sep = ",")
-   write.table(out_CI_upper, "out_Oz_CI_upper.txt", row.names = F, sep = ",")
-   
-   Upper_raster_1 <- rasterFromXYZ(cbind(coordinates, VWC_CI_upper[,1]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Upper_raster_1 , paste("VWC_upper_Oz_", dates_map[1], ".tif", sep = ""))
-   Upper_raster_2 <- rasterFromXYZ(cbind(coordinates, VWC_CI_upper[,2]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Upper_raster_2 , paste("VWC_upper_Oz_", dates_map[2], ".tif", sep = ""))
-   Upper_raster_3 <- rasterFromXYZ(cbind(coordinates, VWC_CI_upper[,3]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Upper_raster_3 , paste("VWC_upper_Oz_", dates_map[3], ".tif", sep = ""))
-   Upper_raster_4 <- rasterFromXYZ(cbind(coordinates, VWC_CI_upper[,4]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Upper_raster_4 , paste("VWC_upper_Oz_", dates_map[4], ".tif", sep = ""))
-   Upper_raster_5 <- rasterFromXYZ(cbind(coordinates, VWC_CI_upper[,5]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Upper_raster_5 , paste("VWC_upper_Oz_", dates_map[5], ".tif", sep = ""))
-   
-   
-   Lower_raster_1 <- rasterFromXYZ(cbind(coordinates, VWC_CI_lower[,1]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Lower_raster_1 , paste("VWC_lower_Oz_", dates_map[1], ".tif", sep = ""))
-   Lower_raster_2 <- rasterFromXYZ(cbind(coordinates, VWC_CI_lower[,2]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Lower_raster_2 , paste("VWC_lower_Oz_", dates_map[2], ".tif", sep = ""))
-   Lower_raster_3 <- rasterFromXYZ(cbind(coordinates, VWC_CI_lower[,3]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Lower_raster_3 , paste("VWC_lower_Oz_", dates_map[3], ".tif", sep = ""))
-   Lower_raster_4 <- rasterFromXYZ(cbind(coordinates, VWC_CI_lower[,4]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Lower_raster_4 , paste("VWC_lower_Oz_", dates_map[4], ".tif", sep = ""))
-   Lower_raster_5 <- rasterFromXYZ(cbind(coordinates, VWC_CI_lower[,5]), res=c(100,100), crs =   crs(sites_proj))
-   writeRaster(Lower_raster_5 , paste("VWC_lower_Oz_", dates_map[5], ".tif", sep = ""))
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
+
+
+
+
+
+
+
+
+################# Scales  10 m
+{
+  
+  
+  index_10<-names(cali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                                  "clay","sand","SOC","BD", "SMAP", 
+                                  "vv_10", "vh_10", "angle_10", 
+                                  "Min.vv_10.", "Min.vh_10." ,"Mean.vv_10." , "Mean.vh_10.", "Max.vv_10.", "Max.vh_10.", "StdDev.vv_10.", "StdDev.vh_10.")
+  
+  
+  qrf_10 = caret::train(x = cali[,index_10],
+                           y = cali$VWC,
+                           na.action = na.omit,
+                           trControl = fitControl, 
+                           metric = "RMSE",
+                           ntree = 50,
+                           nodesize = 10,
+                           method="qrf")
+  
+  qrf_10
+  
+  summary(qrf_10$finalModel)
+  
+  model_10<-qrf_10$finalModel
+  
+  
+  
+  
+  
+  
+  model <- model_10
+  
+  
+  
+  varImpPlot(model)
+  importance(model)
+  
+  # qrf_importance<-qrf$finalMode$importance
+  # write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
+  
+  
+  soil_cali_mean  = predict(model, newdata = cali[, index_10], what = mean)
+  soil_vali_mean  = predict(model, newdata = vali[, index_10], what = mean)
+  
+  
+  
+  
+  sqrt(mean((soil_cali_mean - cali$VWC)^2))  # RMSE.c 
+  mean(soil_cali_mean - cali$VWC)   # ME.c
+  cor(soil_cali_mean, cali$VWC)^2   # R2.c
+  
+  
+  
+  sqrt(mean((model$predicted - cali$VWC)^2))  # RMSE.c 
+  mean(model$predicted - cali$VWC)   # ME.c
+  cor(model$predicted, cali$VWC)^2   # R2.c
+  
+  
+  sqrt(mean((vali[!is.na(soil_vali_mean),]$VWC - soil_vali_mean[!is.na(soil_vali_mean)])^2, na.rm = T))   # RMSE.v 
+  mean(vali$VWC - soil_vali_mean, na.rm = T)    # ME.v
+  cor(vali[!is.na(soil_vali_mean),]$VWC , soil_vali_mean[!is.na(soil_vali_mean)])^2   # R2.v
+  
+  
+  
+}
+
+
+################# Scales  30 m
+{
+  
+  
+  index_30<-names(cali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                                "clay","sand","SOC","BD", "SMAP", 
+                                "vv_30", "vh_30", "angle_30", 
+                                "Min.vv_30.", "Min.vh_30." ,"Mean.vv_30." , "Mean.vh_30.", "Max.vv_30.", "Max.vh_30.", "StdDev.vv_30.", "StdDev.vh_30.")
+  
+  
+  qrf_30 = caret::train(x = cali[,index_30],
+                         y = cali$VWC,
+                         na.action = na.omit,
+                         trControl = fitControl, 
+                         metric = "RMSE",
+                         ntree = 50,
+                         nodesize = 10,
+                         method="qrf")
+  
+  qrf_30
+  
+  summary(qrf_30$finalModel)
+  
+  model_30<-qrf_30$finalModel
+  
+  
+  
+  
+  
+  
+  model <- model_30
+  
+  
+  
+  varImpPlot(model)
+  importance(model)
+  
+  # qrf_importance<-qrf$finalMode$importance
+  # write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
+  
+  
+  soil_cali_mean  = predict(model, newdata = cali[, index_30], what = mean)
+  soil_vali_mean  = predict(model, newdata = vali[, index_30], what = mean)
+  
+  
+  
+  
+  sqrt(mean((soil_cali_mean - cali$VWC)^2))  # RMSE.c 
+  mean(soil_cali_mean - cali$VWC)   # ME.c
+  cor(soil_cali_mean, cali$VWC)^2   # R2.c
+  
+  
+  
+  sqrt(mean((model$predicted - cali$VWC)^2))  # RMSE.c 
+  mean(model$predicted - cali$VWC)   # ME.c
+  cor(model$predicted, cali$VWC)^2   # R2.c
+  
+  
+  sqrt(mean((vali[!is.na(soil_vali_mean),]$VWC - soil_vali_mean[!is.na(soil_vali_mean)])^2, na.rm = T))   # RMSE.v 
+  mean(vali$VWC - soil_vali_mean, na.rm = T)    # ME.v
+  cor(vali[!is.na(soil_vali_mean),]$VWC , soil_vali_mean[!is.na(soil_vali_mean)])^2   # R2.v
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+}
+
+
+
+
+
+
+
+
+
+##################  By Countries
+
+
+############ Global model
+
+
+cali_2<-all2[all2$Validation2==0,]
+vali_2<-all2[all2$Validation2==1,]
+
+summary(cali_2)
+summary(vali_2)
+
+
+
+############# 100 m
+
+
+names(cali_2)
+
+
+index_100_Network<-names(cali_2) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                              "clay","sand","SOC","BD", "SMAP", 
+                              "vv_100", "vh_100", "angle_100", 
+                              "Min.vv_100.", "Min.vh_100." ,"Mean.vv_100." , "Mean.vh_100.", "Max.vv_100.", "Max.vh_100.", "StdDev.vv_100.", "StdDev.vh_100.")
+
+
+qrf_100_Network = caret::train(x = cali_2[,index_100_Network],
+                       y = cali_2$VWC,
+                       na.action = na.omit,
+                       trControl = fitControl, 
+                       metric = "RMSE",
+                       ntree = 50,
+                       nodesize = 10,
+                       method="qrf")
+
+qrf_100_Network
+
+summary(qrf_100_Network$finalModel)
+
+model_100_Network<-qrf_100_Network$finalModel
+
+
+
+model_Network <- model_100_Network
+
+
+
+varImpPlot(model_Network)
+importance(model_Network)
+
+# qrf_importance<-qrf$finalMode$importance
+# write.csv(qrf_importance, "qrf_importance.csv", row.names = T)
+
+
+soil_cali_mean_Network  = predict(model_Network, newdata = cali_2[, index_100_Network], what = mean)
+soil_vali_mean_Network  = predict(model_Network, newdata = vali_2[, index_100_Network], what = mean)
+
+
+
+
+sqrt(mean((soil_cali_mean_Network - cali_2$VWC)^2))  # RMSE.c 
+mean(soil_cali_mean_Network - cali_2$VWC)   # ME.c
+cor(soil_cali_mean_Network, cali_2$VWC)^2   # R2.c
+
+
+
+sqrt(mean((model_Network$predicted - cali_2$VWC)^2))  # RMSE.c 
+mean(model_Network$predicted - cali_2$VWC)   # ME.c
+cor(model_Network$predicted, cali_2$VWC)^2   # R2.c
+
+
+sqrt(mean((vali_2[!is.na(soil_vali_mean_Network),]$VWC - soil_vali_mean_Network[!is.na(soil_vali_mean_Network)])^2, na.rm = T))   # RMSE.v 
+mean(vali_2$VWC - soil_vali_mean_Network, na.rm = T)    # ME.v
+cor(vali_2[!is.na(soil_vali_mean_Network),]$VWC , soil_vali_mean_Network[!is.na(soil_vali_mean_Network)])^2   # R2.v
+
+
+
+plot( cali_2$VWC,  soil_cali_mean_Network, xlim = c(0, 0.7), ylim = c(0, 0.7))
+abline(0,1)
+
+plot( cali_2$VWC,  model_Network$predicted, xlim = c(0, 0.7), ylim = c(0, 0.7))
+abline(0,1)
+
+plot( vali_2$VWC,  soil_vali_mean_Network, xlim = c(0, 0.7), ylim = c(0, 0.7))
+abline(0,1)
+
+
+
+sqrt(mean((cali_2$SMAP - cali_2$VWC)^2))  # RMSE.c 
+mean(cali_2$SMAP - cali_2$VWC)   # ME.c
+cor(cali_2$SMAP, cali_2$VWC)^2   # R2.c
+RPD(cali_2$SMAP, cali_2$VWC)
+RPIQ(cali_2$SMAP, cali_2$VWC)
+#NSE(cali$SMAP, cali$VWC)
+
+
+
+
+
+sqrt(mean((vali_2$SMAP - vali_2$VWC)^2))  # RMSE.v 
+mean(vali_2$VWC - vali_2$SMAP)    # ME.v
+cor(vali_2$VWC , vali_2$SMAP)^2   # R2.v
+RPD(vali_2$SMAP, vali_2$VWC)
+RPIQ(vali_2$SMAP, vali_2$VWC)
+#NSE(vali$SMAP, vali$VWC)
+
+
+out_cali_Network<-cali_2
+out_vali_Network<-vali_2
+out_cali_Network$VWC_mean<-soil_cali_mean_Network
+out_vali_Network$VWC_mean<-soil_vali_mean_Network
+out_cali_Network$VWC_cv<-model_Network$predicted
+out_vali_Network$VWC_cv<-soil_vali_mean_Network
+
+out_Network<-rbind(out_cali_Network, out_vali_Network)
+
+write.csv(out_Network, "out_100m_full_Network.csv", row.names = F)
+
+
+  
+  
+  
+  
+
+
+
+
+######################################
+#### Non-Spiking Wu
+
+{
+  
+  Wu<-read.csv("data_Wu.csv", header = T)
+  
+  
+  
+  
+  
+  Wu2<-Wu[(!is.na(Wu$VWC))&(!is.na(Wu$elevation))&(!is.na(Wu$clay))&(!is.na(Wu$SMAP))&(!is.na(Wu$vv_10))&(!is.na(Wu$vv_30))&(!is.na(Wu$vv_100)),]
+  
+  
+  spiking_grass_index<-unique(Wu2[Wu2$landcover=="Herbaceous", ]$name)
+  spiking_forest_index<-unique(Wu2[Wu2$landcover=="Forest", ]$name)
+  
+  set.seed(123)
+  index_1<-sample(spiking_grass_index, 3)
+  
+  set.seed(123)
+  index_2<-sample(spiking_forest_index, 5)
+  
+  index<-c(index_1,index_2 )
+  
+  Wu2_spiking<-Wu2[Wu2$name%in%index,]
+  Wu2_vali<-Wu2[!Wu2$name%in%index,]
+  
+  
+  
+  index_Wu_10<-names(Wu2_vali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", "clay","sand","SOC","BD", 
+                                      "SMAP", 
+                                      "vv_10", "vh_10", "angle_10", 
+                                      "Min.vv_10.", "Min.vh_10." ,"Mean.vv_10." , "Mean.vh_10.", "Max.vv_10.", "Max.vh_10.", "StdDev.vv_10.", "StdDev.vh_10.")
+  
+  
+  
+  Wu2_10_mean  = predict(model_10, newdata = Wu2_vali[, index_Wu_10], what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_10_mean - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_10_mean - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_10_mean, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  
+  
+  index_Wu_30<-names(Wu2_vali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", "clay","sand","SOC","BD", 
+                                      "SMAP", 
+                                      "vv_30", "vh_30", "angle_30", 
+                                      "Min.vv_30.", "Min.vh_30." ,"Mean.vv_30." , "Mean.vh_30.", "Max.vv_30.", "Max.vh_30.", "StdDev.vv_30.", "StdDev.vh_30.")
+  
+  
+  Wu2_30_mean  = predict(model_30, newdata = Wu2_vali[, index_Wu_30], what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_30_mean - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_30_mean - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_30_mean, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  index_Wu_100<-names(Wu2_vali) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", "clay","sand","SOC","BD", 
+                                       "SMAP", 
+                                       "vv_100", "vh_100", "angle_100", 
+                                       "Min.vv_100.", "Min.vh_100." ,"Mean.vv_100." , "Mean.vh_100.", "Max.vv_100.", "Max.vh_100.", "StdDev.vv_100.", "StdDev.vh_100.")
+  
+  
+  Wu2_100_mean  = predict(model_100, newdata = Wu2_vali[, index_Wu_100], what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_100_mean - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_100_mean - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_100_mean, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  
+  
+
+  
+  Wu2_SMAP_mean  = predict(model_SMAP, newdata = Wu2_vali, what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_SMAP_mean - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_SMAP_mean - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_SMAP_mean, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  Wu2_soil_mean  = predict(model_soil, newdata = Wu2_vali, what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_soil_mean - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_soil_mean - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_soil_mean, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  Wu2_terrain_mean  = predict(model_terrain, newdata = Wu2_vali, what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_terrain_mean - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_terrain_mean - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_terrain_mean, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  Wu2_S1_mean  = predict(model_S1, newdata = Wu2_vali, what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_S1_mean - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_S1_mean - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_S1_mean, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  Wu_out<-cbind(Wu2_vali, Wu2_10_mean, Wu2_30_mean , Wu2_100_mean,  Wu2_SMAP_mean, Wu2_S1_mean, Wu2_soil_mean, Wu2_terrain_mean)
+  
+  write.csv(Wu_out, "Wu2_out_non_spiking.csv", row.names = F)
+  
+  
+  
+  
+  
+}
+
+
+
+################# Spiking
+
+{
+  
+  
+  index_10_spiking<-names(Wu2_spiking) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                               "clay","sand","SOC","BD", "SMAP", 
+                               "vv_10", "vh_10", "angle_10", 
+                               "Min.vv_10.", "Min.vh_10." ,"Mean.vv_10." , "Mean.vh_10.", "Max.vv_10.", "Max.vh_10.", "StdDev.vv_10.", "StdDev.vh_10.")
+  
+  
+  cali_10_spiking <-rbind(cali[,index_10], Wu2_spiking[,index_10_spiking])
+  
+  
+  
+  qrf_10_spiking = caret::train(x = cali_10_spiking,
+                        y = c(cali$VWC,Wu2_spiking$VWC),
+                        na.action = na.omit,
+                        trControl = fitControl, 
+                        metric = "RMSE",
+                        ntree = 50,
+                        nodesize = 10,
+                        method="qrf")
+  
+  qrf_10_spiking
+  
+  summary(qrf_10_spiking$finalModel)
+  
+  model_10_spiking<-qrf_10_spiking$finalModel
+  
+  
+  
+  
+  
+ 
+  Wu2_10_mean_spiking  = predict(model_10_spiking, newdata = Wu2_vali, what = mean)
+   
+  
+  
+  sqrt(mean((Wu2_10_mean_spiking - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_10_mean_spiking - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_10_mean_spiking, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  
+  
+  
+  index_30_spiking<-names(Wu2_spiking) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                                              "clay","sand","SOC","BD", "SMAP", 
+                                              "vv_30", "vh_30", "angle_30", 
+                                              "Min.vv_30.", "Min.vh_30." ,"Mean.vv_30." , "Mean.vh_30.", "Max.vv_30.", "Max.vh_30.", "StdDev.vv_30.", "StdDev.vh_30.")
+  
+  
+  cali_30_spiking <-rbind(cali[,index_30], Wu2_spiking[,index_30_spiking])
+  
+  
+  
+  qrf_30_spiking = caret::train(x = cali_30_spiking,
+                                y = c(cali$VWC,Wu2_spiking$VWC),
+                                na.action = na.omit,
+                                trControl = fitControl, 
+                                metric = "RMSE",
+                                ntree = 50,
+                                nodesize = 30,
+                                method="qrf")
+  
+  qrf_30_spiking
+  
+  summary(qrf_30_spiking$finalModel)
+  
+  model_30_spiking<-qrf_30_spiking$finalModel
+  
+  
+  
+  
+  
+  
+  Wu2_30_mean_spiking  = predict(model_30_spiking, newdata = Wu2_vali, what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_30_mean_spiking - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_30_mean_spiking - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_30_mean_spiking, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  index_100_spiking<-names(Wu2_spiking) %in% c("elevation", "slope_9", "aspect_9", "hillshade", "meanc","planc","profc","tangc","roughness", 
+                                              "clay","sand","SOC","BD", "SMAP", 
+                                              "vv_100", "vh_100", "angle_100", 
+                                              "Min.vv_100.", "Min.vh_100." ,"Mean.vv_100." , "Mean.vh_100.", "Max.vv_100.", "Max.vh_100.", "StdDev.vv_100.", "StdDev.vh_100.")
+  
+  
+  cali_100_spiking <-rbind(cali[,index_100], Wu2_spiking[,index_100_spiking])
+  
+  
+  
+  qrf_100_spiking = caret::train(x = cali_100_spiking,
+                                y = c(cali$VWC,Wu2_spiking$VWC),
+                                na.action = na.omit,
+                                trControl = fitControl, 
+                                metric = "RMSE",
+                                ntree = 50,
+                                nodesize = 100,
+                                method="qrf")
+  
+  qrf_100_spiking
+  
+  summary(qrf_100_spiking$finalModel)
+  
+  model_100_spiking<-qrf_100_spiking$finalModel
+  
+  
+
+  
+  Wu2_100_mean_spiking  = predict(model_100_spiking, newdata = Wu2_vali, what = mean)
+  
+  
+  
+  sqrt(mean((Wu2_100_mean_spiking - Wu2_vali$VWC)^2))  # RMSE.c 
+  mean(Wu2_100_mean_spiking - Wu2_vali$VWC)   # ME.c
+  cor(Wu2_100_mean_spiking, Wu2_vali$VWC)^2   # R2.c
+  
+  
+  
+  
+  
+  
+  
+  
+  Wu_out_spiking<-cbind(Wu2_vali, Wu2_10_mean_spiking, Wu2_30_mean_spiking , Wu2_100_mean_spiking )
+  
+  write.csv(Wu_out_spiking, "Wu2_out_spiking.csv", row.names = F)
+  
+  
+  
+}
+   
+   
+    
    
